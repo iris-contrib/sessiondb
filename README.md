@@ -1,6 +1,6 @@
 # sessiondb
 
-[![Go Report](https://goreportcard.com/badge/github.com/iris-contrib/sessiondb)](https://goreportcard.com/report/github.com/iris-contrib/sessiondb)
+[![Go Report](https://goreportcard.com/badge/github.com/iris-contrib/sessiondb)](https://goreportcard.com/badge/github.com/iris-contrib/sessiondb)
 
 Dgraph &amp; MongoDB stores for `sessions` of [kataras/iris](https://github.com/kataras/go-sessions).
 

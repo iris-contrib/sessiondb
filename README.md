@@ -55,3 +55,13 @@ go get github.com/iris-contrib/sessiondb/dgraphstore
 
 	sess.UseDatabase(db)
 ```
+
+## Contribute 
+
+Development of each store is done on branches. If you plan to work with an existing store checkout the corresponding branch. If you intent to implement a new store then create a new branch named after the DB you are using.
+
+The repository is using [go-submodules](https://github.com/go-modules-by-example/index/tree/master/009_submodules). 
+
+For releasing a new version of each individual store (submodule) you need to 
+1. merge from corresponding branch to `master`
+2. tag with appropriate store name and version ie. `git tag mongostore/v0.1.1`

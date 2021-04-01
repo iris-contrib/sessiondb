@@ -91,6 +91,12 @@ func NewFromDB(conn *grpc.ClientConn) (*Database, error) {
 	return db, nil
 }
 
+// SetLogger sets the logger once before server ran.
+// By default the Iris one is injected.
+func (db *Database) SetLogger(logger *golog.Logger) {
+	db.logger = logger
+}
+
 // Acquire receives a session's lifetime from the database,
 // if the return value is LifeTime{} then the session manager sets the life time based on the expiration duration lives in configuration.
 func (db *Database) Acquire(sid string, expires time.Duration) sessions.LifeTime {

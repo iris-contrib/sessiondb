@@ -5,8 +5,8 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/bh90210/go-sessions-stores/mongostore"
-	"github.com/kataras/go-sessions/v3"
+	"github.com/iris-contrib/sessiondb/mongostore"
+	"github.com/kataras/iris/v12/sessions"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 

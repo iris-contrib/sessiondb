@@ -64,4 +64,8 @@ The repository is using [go-submodules](https://github.com/go-modules-by-example
 
 For releasing a new version of each individual store (submodule) you need to 
 1. merge from corresponding branch to `main`
+<<<<<<< HEAD
 2. tag with appropriate store name and particular store's version ie. `git tag mongostore/v0.1.1`
+=======
+2. tag with appropriate store name and particular store's version ie. `git tag mongostore/v0.1.1`
+>>>>>>> 1faf4e8fdc8f2bdd9ba3ecafd721d2ad39454f81

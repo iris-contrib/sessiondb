@@ -63,5 +63,5 @@ Development of each store is done on branches. If you plan to work with an exist
 The repository is using [go-submodules](https://github.com/go-modules-by-example/index/tree/master/009_submodules). *The rationale behind this optimisation is to avoid the user having to download unnecessary drivers/libraries but keep the maintenance tight and clean.*
 
 For releasing a new version of each individual store (submodule) you need to 
-1. merge from corresponding branch to `master`
+1. merge from corresponding branch to `main`
 2. tag with appropriate store name and particular store's version ie. `git tag mongostore/v0.1.1`

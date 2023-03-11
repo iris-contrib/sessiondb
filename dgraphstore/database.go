@@ -9,10 +9,11 @@ import (
 
 	"github.com/kataras/iris/v12/sessions"
 
-	"github.com/dgraph-io/dgo/v200"
-	"github.com/dgraph-io/dgo/v200/protos/api"
+	"github.com/dgraph-io/dgo/v210"
+	"github.com/dgraph-io/dgo/v210/protos/api"
 	"github.com/kataras/golog"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 var errPathMissing = errors.New("gRPC url is required")
@@ -24,7 +25,13 @@ type Database struct {
 	logger  *golog.Logger
 }
 
-// New creates and returns a new Dgraph database connection to "target" with `grpc.WithInsecure()`.
+var _ sessions.Database = (*Database)(nil)
+
+// DefaultGRPCDialOptions is used on `grpc.Dial` call of the `New` package-level function.
+var DefaultGRPCDialOptions []grpc.DialOption = []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
+
+// New creates and returns a new Dgraph database connection to "target" with the
+// DefaultGRPCDialOptions, which contains `insecure.NewCredentials()`.
 // Target should include the url to Dgraph's alpha gRPC-external-public port.
 //
 // It will remove any old session files.
@@ -33,7 +40,7 @@ func New(target string) (*Database, error) {
 		return nil, errPathMissing
 	}
 
-	conn, err := grpc.Dial(target, grpc.WithInsecure())
+	conn, err := grpc.Dial(target, DefaultGRPCDialOptions...)
 	if err != nil {
 		return nil, err
 	}
@@ -97,6 +104,8 @@ func (db *Database) SetLogger(logger *golog.Logger) {
 	db.logger = logger
 }
 
+var cookieExpireDelete = time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC)
+
 // Acquire receives a session's lifetime from the database,
 // if the return value is LifeTime{} then the session manager sets the life time based on the expiration duration lives in configuration.
 func (db *Database) Acquire(sid string, expires time.Duration) sessions.LifeTime {
@@ -148,7 +157,7 @@ func (db *Database) Acquire(sid string, expires time.Duration) sessions.LifeTime
 			return sessions.LifeTime{}
 		}
 
-		return sessions.LifeTime{Time: sessions.CookieExpireDelete}
+		return sessions.LifeTime{Time: cookieExpireDelete}
 	}
 
 	// found, return the expiration.
@@ -166,10 +175,10 @@ func (db *Database) OnUpdateExpiration(sid string, newExpires time.Duration) err
 
 // Set sets a key value of a specific session.
 // Ignore the "immutable".
-func (db *Database) Set(sid string, lifetime sessions.LifeTime, key string, value interface{}, immutable bool) {
+func (db *Database) Set(sid string, key string, value interface{}, dur time.Duration, immutable bool) error {
 	valueBytes, err := sessions.DefaultTranscoder.Marshal(value)
 	if err != nil {
-		return
+		return err
 	}
 
 	// convert []byte slice to base64 string
@@ -200,8 +209,8 @@ func (db *Database) Set(sid string, lifetime sessions.LifeTime, key string, valu
 		CommitNow: true,
 	}
 
-	db.Service.NewTxn().Do(ctx, req)
-	return
+	_, err = db.Service.NewTxn().Do(ctx, req)
+	return err
 }
 
 // Get retrieves a session value based on the key.
@@ -251,7 +260,7 @@ func (db *Database) Decode(sid, key string, outPtr interface{}) error {
 }
 
 // Visit loops through all session keys and values.
-func (db *Database) Visit(sid string, cb func(key string, value interface{})) {
+func (db *Database) Visit(sid string, cb func(key string, value interface{})) error {
 	ctx := context.Background()
 
 	query := `{
@@ -263,7 +272,7 @@ func (db *Database) Visit(sid string, cb func(key string, value interface{})) {
 
 	response, err := db.Service.NewTxn().Query(ctx, query)
 	if err != nil {
-		return
+		return err
 	}
 
 	var r struct {
@@ -275,23 +284,25 @@ func (db *Database) Visit(sid string, cb func(key string, value interface{})) {
 
 	err = json.Unmarshal(response.Json, &r)
 	if err != nil {
-		return
+		return err
 	}
 
 	if len(r.Session) == 0 {
 		// nothing found.
-		return
+		return nil
 	}
 
 	for _, session := range r.Session {
 		var value interface{}
 		valueBase, _ := base64.StdEncoding.DecodeString(session.Value)
 		if err := sessions.DefaultTranscoder.Unmarshal(valueBase, &value); err != nil {
-			return
+			return err
 		}
 
 		cb(session.Key, value)
 	}
+
+	return nil
 }
 
 // Len returns the length of the session's entries (keys).
@@ -347,15 +358,11 @@ func (db *Database) Delete(sid string, key string) (deleted bool) {
 	}
 
 	_, err := db.Service.NewTxn().Do(ctx, req)
-	if err != nil {
-		return false
-	}
-
-	return true
+	return err == nil
 }
 
 // Clear removes all session key values but it keeps the session entry.
-func (db *Database) Clear(sid string) {
+func (db *Database) Clear(sid string) error {
 	ctx := context.Background()
 
 	query := `{
@@ -368,7 +375,7 @@ func (db *Database) Clear(sid string) {
 
 	response, err := db.Service.NewTxn().Query(ctx, query)
 	if err != nil {
-		return
+		return err
 	}
 
 	var r struct {
@@ -382,7 +389,7 @@ func (db *Database) Clear(sid string) {
 
 	err = json.Unmarshal(response.Json, &r)
 	if err != nil {
-		return
+		return err
 	}
 
 	for _, entry := range r.Entries {
@@ -397,13 +404,18 @@ func (db *Database) Clear(sid string) {
 			CommitNow:  true,
 			DeleteJson: del,
 		}
-		db.Service.NewTxn().Mutate(ctx, mu)
+
+		if _, err = db.Service.NewTxn().Mutate(ctx, mu); err != nil {
+			return err
+		}
 	}
+
+	return nil
 }
 
 // Release destroys the session, it clears and removes the session entry,
 // session manager will create a new session ID on the next request after this call.
-func (db *Database) Release(sid string) {
+func (db *Database) Release(sid string) error {
 	ctx := context.Background()
 
 	query := `{
@@ -425,9 +437,7 @@ func (db *Database) Release(sid string) {
 	}
 
 	_, err := db.Service.NewTxn().Do(ctx, req)
-	if err != nil {
-		return
-	}
+	return err
 }
 
 // Close terminates Dgraph's gRPC connection.

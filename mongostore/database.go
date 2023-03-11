@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
-	"log"
 	"time"
 
 	"github.com/kataras/iris/v12/sessions"
@@ -23,6 +22,8 @@ type Database struct {
 	Service *mongo.Database
 	logger  *golog.Logger
 }
+
+var _ sessions.Database = (*Database)(nil)
 
 // New creates and returns a new MongoDB(file-based) storage with custom client options.
 // Database and collection names should be included.
@@ -49,12 +50,14 @@ func (db *Database) SetLogger(logger *golog.Logger) {
 	db.logger = logger
 }
 
+var cookieExpireDelete = time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC)
+
 // Acquire receives a session's lifetime from the database,
 // if the return value is LifeTime{} then the session manager sets the life time based on the expiration duration lives in configuration.
 func (db *Database) Acquire(sid string, expires time.Duration) sessions.LifeTime {
 	var result bson.Raw
 	ctx := context.TODO()
-	res := db.Service.Collection(sid).FindOne(ctx, bson.D{{"key", sid}})
+	res := db.Service.Collection(sid).FindOne(ctx, bson.D{{Key: "key", Value: sid}})
 
 	// not found, create an entry and return an empty lifetime, session manager will do its job.
 	if err := res.Err(); err != nil {
@@ -63,10 +66,10 @@ func (db *Database) Acquire(sid string, expires time.Duration) sessions.LifeTime
 		timeBase := base64.StdEncoding.EncodeToString(timeBytes)
 		db.Service.Collection(sid).InsertOne(
 			context.TODO(),
-			bson.D{{"$set", bson.D{{"key", sid}, {"value", timeBase}}}},
+			bson.D{{Key: "$set", Value: bson.D{{Key: "key", Value: sid}, {Key: "value", Value: timeBase}}}},
 		)
 
-		return sessions.LifeTime{Time: sessions.CookieExpireDelete}
+		return sessions.LifeTime{Time: cookieExpireDelete}
 	}
 
 	// found, return the expiration.
@@ -87,24 +90,25 @@ func (db *Database) OnUpdateExpiration(sid string, newExpires time.Duration) err
 
 // Set sets a key value of a specific session.
 // Ignore the "immutable".
-func (db *Database) Set(sid string, lifetime sessions.LifeTime, key string, value interface{}, immutable bool) {
+func (db *Database) Set(sid string, key string, value interface{}, dur time.Duration, immutable bool) error {
 	valueBytes, err := sessions.DefaultTranscoder.Marshal(value)
 	if err != nil {
-		return
+		return err
 	}
 
 	// convert []byte slice to base64 string
 	valueBase := base64.StdEncoding.EncodeToString(valueBytes)
 
-	db.Service.Collection(sid).UpdateOne(
+	_, err = db.Service.Collection(sid).UpdateOne(
 		context.Background(),
 		// filter
-		bson.D{{"key", key}},
+		bson.D{{Key: "key", Value: key}},
 		// update
-		bson.D{{"$set", bson.D{{"key", key}, {"value", valueBase}}}},
+		bson.D{{Key: "$set", Value: bson.D{{Key: "key", Value: key}, {Key: "value", Value: valueBase}}}},
 		// options
 		options.Update().SetUpsert(true),
 	)
+	return err
 }
 
 // Get retrieves a session value based on the key.
@@ -120,7 +124,7 @@ func (db *Database) Get(sid string, key string) (value interface{}) {
 func (db *Database) Decode(sid, key string, outPtr interface{}) error {
 	var result bson.Raw
 	ctx := context.TODO()
-	res := db.Service.Collection(sid).FindOne(ctx, bson.D{{"key", key}})
+	res := db.Service.Collection(sid).FindOne(ctx, bson.D{{Key: "key", Value: key}})
 
 	err := res.Decode(&result)
 	if err != nil {
@@ -139,17 +143,17 @@ func (db *Database) Decode(sid, key string, outPtr interface{}) error {
 }
 
 // Visit loops through all session keys and values.
-func (db *Database) Visit(sid string, cb func(key string, value interface{})) {
+func (db *Database) Visit(sid string, cb func(key string, value interface{})) error {
 	ctx := context.TODO()
 	res, err := db.Service.Collection(sid).Find(ctx, bson.D{})
 	if err != nil {
-		return
+		return err
 	}
 
 	for res.Next(context.TODO()) {
 		var result bson.Raw
 		if err := res.Decode(&result); err != nil {
-			log.Fatal(err)
+			return err
 		}
 
 		k := result.Lookup("key")
@@ -159,9 +163,8 @@ func (db *Database) Visit(sid string, cb func(key string, value interface{})) {
 		sessions.DefaultTranscoder.Unmarshal(valueBase, &val)
 		cb(k.String(), val)
 	}
-	if err := res.Err(); err != nil {
-		log.Fatal(err)
-	}
+
+	return res.Err()
 }
 
 // Len returns the length of the session's entries (keys).
@@ -178,7 +181,7 @@ func (db *Database) Len(sid string) (n int) {
 // Delete removes a session key value based on its key.
 func (db *Database) Delete(sid string, key string) (deleted bool) {
 	ctx := context.TODO()
-	_, err := db.Service.Collection(sid).DeleteOne(ctx, bson.D{{"key", key}})
+	_, err := db.Service.Collection(sid).DeleteOne(ctx, bson.D{{Key: "key", Value: key}})
 	if err != nil {
 		deleted = false
 		return
@@ -188,14 +191,15 @@ func (db *Database) Delete(sid string, key string) (deleted bool) {
 }
 
 // Clear removes all session key values but it keeps the session entry.
-func (db *Database) Clear(sid string) {
-	db.Service.Collection(sid).DeleteMany(context.TODO(), bson.D{{"key", bson.D{{"$ne", sid}}}})
+func (db *Database) Clear(sid string) error {
+	_, err := db.Service.Collection(sid).DeleteMany(context.TODO(), bson.D{{Key: "key", Value: bson.D{{Key: "$ne", Value: sid}}}})
+	return err
 }
 
 // Release destroys the session, it clears and removes the session entry,
 // session manager will create a new session ID on the next request after this call.
-func (db *Database) Release(sid string) {
-	db.Service.Collection(sid).Drop(context.TODO())
+func (db *Database) Release(sid string) error {
+	return db.Service.Collection(sid).Drop(context.TODO())
 }
 
 // Close terminates Dgraph's gRPC connection.
